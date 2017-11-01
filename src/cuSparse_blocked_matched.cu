@@ -19,6 +19,8 @@ int main(int argc, char *argv[]) {
 
   cusparseHandle_t handle = 0;
   cusparseMatDescr_t descr = 0;
+  cusparseCreate(&handle);
+  cusparseCreateMatDescr(&descr);
 
   h_vec_t<unsigned> h_distance_1;
   unsigned num_feat_1 = atoi(argv[2]);
@@ -97,31 +99,32 @@ int main(int argc, char *argv[]) {
   ***************************************************/
   unsigned len_affinity_block = num_feat_2 * num_feat_2;
 
-#ifdef ACCELERATE
-  d_vec_t<double> d_affinity_blocks(d_uniq_keys.size() * len_affinity_block);
-#else
+  //#ifdef ACCELERATE
+  //  d_vec_t<double> d_affinity_blocks(d_uniq_keys.size() *
+  //  len_affinity_block);
+  //#else
   h_vec_t<double> h_affinity_blocks(h_uniq_keys.size() * len_affinity_block);
-#endif
-
-#ifdef ACCELERATE
-  d_vec_t<double> csr_val;
-  d_vec_t<int> csr_col;
-  d_vec_t<int> csr_row;
-  d_vec_t<int> csr_blocked_len;
-
-  for (int i = 0; i < d_uniq_keys.size(); ++i) {
-    transform(d_distance_2.begin(), d_distance_2.end(),
-              d_affinity_blocks.begin() + i * len_affinity_block,
-              Affinity(d_uniq_keys[i]));
-
-    CompressMatrix(csr_val, csr_col, csr_row,
-                   raw_pointer_cast(d_affinity_blocks.begin()) +
-                       i * len_affinity_block,
-                   num_feat_2, num_feat_2);
-
-    csr_blocked_len.push_back(csr_val.size());
-  }
-#else
+  //#endif
+  //
+  //#ifdef ACCELERATE
+  //  d_vec_t<double> csr_val;
+  //  d_vec_t<int> csr_col;
+  //  d_vec_t<int> csr_row;
+  //  d_vec_t<int> csr_blocked_len;
+  //
+  //  for (int i = 0; i < d_uniq_keys.size(); ++i) {
+  //    transform(d_distance_2.begin(), d_distance_2.end(),
+  //              d_affinity_blocks.begin() + i * len_affinity_block,
+  //              Affinity(d_uniq_keys[i]));
+  //
+  //    CompressMatrix(csr_val, csr_col, csr_row,
+  //                   raw_pointer_cast(d_affinity_blocks.begin()) +
+  //                       i * len_affinity_block,
+  //                   num_feat_2, num_feat_2);
+  //
+  //    csr_blocked_len.push_back(csr_val.size());
+  //  }
+  //#else
   h_vec_t<double> csr_val;
   h_vec_t<int> csr_col;
   h_vec_t<int> csr_row;
@@ -143,37 +146,24 @@ int main(int argc, char *argv[]) {
     csr_blocked_len.push_back(csr_val.size());
   }
 
-//  std::cout << "val size: " << csr_val.size() << std::endl;
-
   d_vec_t<double> d_csr_val = csr_val;
   d_vec_t<int> d_csr_col = csr_col;
   d_vec_t<int> d_csr_row = csr_row;
-#endif
   
   std::cout << "affinity runtime: "
             << (clock() - begin_time) / double(CLOCKS_PER_SEC) * 1000 << std::endl;
-
-//  std::cout << "affinity" << std::endl;
-//  std::cout << "values"
-//            << "  "
-//            << "columns" << std::endl;
+  //#endif
+    
+  //std::cout << "values"
+    //          << "  "
+    //          << "columns" << std::endl;
 //  for (int i = 0; i < h_uniq_keys.size(); ++i) {
-//    //std::cout << "unq keys:" << h_uniq_keys[i] << std::endl;
 //    for (int j = csr_blocked_len[i]; j < csr_blocked_len[i + 1]; ++j) {
-//      std::cout << csr_val[j] << "    " << csr_col[j] << std::endl;
+//      std::cout << csr_val[j] << "   " << csr_col[j] << "  " << std::endl;
 //    }
-//  std::cout << std::endl;
+//    std::cout << std::endl;
 //  }
 //  std::cout << std::endl;
-
- // std::cout << "csr rows" << std::endl;
- // for (int i = 0; i < h_uniq_keys.size(); ++i) {
- //   std::cout << "unq keys:" << h_uniq_keys[i] << std::endl;
- //   for (int j = 0; j < num_feat_2 + 1; ++j) {
- //     std::cout << csr_row[j + i * (num_feat_2)] << std::endl;
- //   }
- // }
- // std::cout << std::endl;
 
   /******************************************************
   *             initialize eigen vectors                *
@@ -185,14 +175,12 @@ int main(int argc, char *argv[]) {
   norm = 1.0 / sqrt(len_eigen_vec);
   fill(eigen_vec_old.begin(), eigen_vec_old.end(), norm);
 
-#if ACCELERATE
-  int num_keys = d_uniq_keys.size();
-#else
+  //#if ACCELERATE
+  //  int num_keys = d_uniq_keys.size();
+  //#else
   int num_keys = h_uniq_keys.size();
-#endif
+  //#endif
 
-  cusparseCreate(&handle);
-  cusparseCreateMatDescr(&descr);
   /*******************************************************
   *                 compute eigen values                 *
   ********************************************************/
@@ -208,18 +196,16 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < num_keys; i++) {
       cusparseSetStream(handle, streams[i]);
-
-#ifdef ACCELERATE
-      for (int j = 0; j < d_keys_idcs[i].size(); j++) {
-        int row = d_keys_idcs[i][j] / num_feat_1;
-        int col = d_keys_idcs[i][j] % num_feat_1;
-#else
+      int csr_size = csr_blocked_len[i + 1] - csr_blocked_len[i];
+      //#ifdef ACCELERATE
+      //      for (int j = 0; j < d_keys_idcs[i].size(); j++) {
+      //        int row = d_keys_idcs[i][j] / num_feat_1;
+      //        int col = d_keys_idcs[i][j] % num_feat_1;
+      //#else
       for (int j = 0; j < h_keys_idcs[i].size(); j++) {
         int row = h_keys_idcs[i][j] / num_feat_1;
         int col = h_keys_idcs[i][j] % num_feat_1;
-#endif
-      
-        int csr_size = csr_blocked_len[i + 1] - csr_blocked_len[i];
+        //#endif
 
         cusparseDcsrmv(
             handle, CUSPARSE_OPERATION_NON_TRANSPOSE, num_feat_2, num_feat_2,
@@ -230,7 +216,7 @@ int main(int argc, char *argv[]) {
             raw_pointer_cast(eigen_vec_old.data()) + col * num_feat_2, &beta,
             raw_pointer_cast(eigen_vec_new.data()) + row * num_feat_2);
       }
-  }
+    }
 
     double init = 0;
     norm =
@@ -245,13 +231,12 @@ int main(int argc, char *argv[]) {
 
   std::cout << "Eigen runtime: "
             << (clock() - begin_time2) / double(CLOCKS_PER_SEC) * 1000 << std::endl;
-  
-  //std::cout << "eigen values" << std::endl;
-  //for (int i = 0; i < eigen_vec_old.size(); i++) {
-  //  std::cout << "eigen new value = " << eigen_vec_new[i] << "";
-  //  std::cout << "eigen old value = " << eigen_vec_old[i] << std::endl;
-  //}
+//  std::cout << "eigen values" << std::endl;
+//  for (int i = 0; i < eigen_vec_old.size(); i++) {
+//    std::cout << "eigen new value = " << eigen_vec_new[i] << "";
+//    std::cout << "eigen old value = " << eigen_vec_old[i] << std::endl;
+//  }
   cusparseDestroy(handle);
 
   return 0;
-  }
+}

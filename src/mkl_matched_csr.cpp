@@ -1,0 +1,118 @@
+#include "utils.h"
+#include <mkl.h>
+#include <time.h>
+
+int main(int argc, char *argv[]) {
+
+  /***********************************************
+  *    initialize program's input parameters     *
+  ***********************************************/
+  double one = 1;
+  double zero = 0;
+  double norm = 0;
+
+  h_vec_t<double> distance_1;
+  int num_feat_1 = atoi(argv[2]);
+  ReadMatrix(distance_1, argv[1], num_feat_1);
+
+  h_vec_t<double> distance_2;
+  int num_feat_2 = atoi(argv[4]);
+  ReadMatrix(distance_2, argv[3], num_feat_2);
+
+  int match_len = atoi(argv[6]);
+  h_vec_t<int> matched_feat_1(match_len);
+  h_vec_t<int> matched_feat_2(match_len);
+  ReadMatchedFeatures(matched_feat_1, matched_feat_2, argv[5], match_len);
+
+  int num_iters = 20;
+  if (8 == argc)
+    num_iters = atoi(argv[7]);
+
+  /**************************************************
+  *            construct affinity  matrix            *
+  ***************************************************/
+  double *distance1 = raw_pointer_cast(distance_1.data());
+  double *distance2 = raw_pointer_cast(distance_2.data());
+
+  //  int *d_matched_1 = raw_pointer_cast(matched_feat_1.data());
+  //  int *d_matched_2 = raw_pointer_cast(matched_feat_2.data());
+
+  const clock_t begin_time = clock();
+
+  double *affinity = new double[match_len * match_len];
+  affinity = AffinityInitialMatches(distance1, distance2, num_feat_1,
+                                    num_feat_2, matched_feat_1.data(),
+                                    matched_feat_2.data(), match_len);
+
+  /************************************************
+  *      convert full matrix to CSR matrix        *
+  ************************************************/
+  h_vec_t<double> value;
+  h_vec_t<int> column;
+  h_vec_t<int> row;
+
+  CompressMatrix(value, column, row, affinity, match_len, match_len);
+
+  const int *pntrb = new int[row.size() - 1];
+  const int *pntre = new int[row.size() - 1];
+
+  pntrb = &row[0];
+  pntre = &row[1];
+  std::cout << "affinity runtime: "
+            << (clock() - begin_time) / double(CLOCKS_PER_SEC) * 1000
+            << std::endl;
+
+  //std::cout << "totalnnz" << value.size() << std::endl; 
+  //  int affinity_size = match_len * match_len;
+  //  //std::cout << "affinity" << std::endl;
+  //  for (int i = 0; i < match_len; ++i) {
+  //    for (int j = 0; j < match_len; ++j) {
+  //      std::cout << affinity[i * match_len + j] << " ";
+  //    }
+  //    std::cout << std::endl;
+  //  }
+  //  std::cout << std::endl;
+
+  /************************************************
+  *           initialize eigen vector            *
+  ************************************************/
+  int len_eigen_vec = match_len;
+  h_vec_t<double> h_eigen_new(len_eigen_vec);
+  fill(h_eigen_new.begin(), h_eigen_new.end(), 0);
+
+  h_vec_t<double> h_eigen_old(len_eigen_vec);
+  norm = 1.0 / sqrt(len_eigen_vec);
+  fill(h_eigen_old.begin(), h_eigen_old.end(), norm);
+
+  /************************************************
+  *           computing eigen vector            *
+  ************************************************/
+  const clock_t begin_time2 = clock();
+
+  for (int iter = 0; iter < num_iters; ++iter) {
+
+    mkl_dcsrmv("N", &len_eigen_vec, &len_eigen_vec, &one, "G**C", value.data(),
+               column.data(), pntrb, pntre, h_eigen_old.data(), &zero,
+               h_eigen_new.data());
+
+    double init = 0;
+    norm = std::sqrt(transform_reduce(h_eigen_new.begin(), h_eigen_new.end(),
+                                      square(), init, thrust::plus<double>()));
+
+    transform(h_eigen_new.begin(), h_eigen_new.end(), h_eigen_old.begin(),
+              division(norm));
+
+    fill(h_eigen_new.begin(), h_eigen_new.end(), 0);
+  }
+  std::cout << "Eigen runtime: "
+            << (clock() - begin_time2) / double(CLOCKS_PER_SEC) * 1000
+            << std::endl;
+
+  //  std::cout << "eigen values" << std::endl;
+  //  for (int i = 0; i < h_eigen_old.size(); i++) {
+  //    std::cout << "eigen new value = " << h_eigen_new[i] << "  ";
+  //    std::cout << "eigen old value = " << h_eigen_old[i] << std::endl;
+  //  }
+
+  return (0);
+}
